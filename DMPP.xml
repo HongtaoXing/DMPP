@@ -144,7 +144,7 @@ public class Script
             F_SW = 1.0 / (1.0 + Math.Pow(WFPS[i] / 0.38, -5.5));
          
             // Soil temperature impact
-            F_ST = 0.06 * Math.Exp(0.08 * st[i]);
+            F_ST = 0.01 * Math.Exp(1.15 * st[i]);
          
             //Soil pH impact
             if (pH[i] &lt;= 4.0)
