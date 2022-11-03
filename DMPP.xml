@@ -1,0 +1,240 @@
+<folder version="37" creator="Apsim 7.10-r4158" name="DenitrificationModules">
+        <manager2 name="DMPP_Test">
+          <ui>
+            <fert_date type="text" description=" private string fert_date;">25-Aug</fert_date>
+            <InitialNI type="text" description="InitialNI">1.0</InitialNI>
+            <x_clay type="list" description="clay content">23, 25, 26, 15</x_clay>
+            <DMPP_P type="text" description="Potential Decay rate">0.7</DMPP_P>
+          </ui>
+          <text>
+using System;
+using ModelFramework;
+using CSGeneral;
+
+public class Script 
+{      
+   [Link] Paddock MyPaddock; // Can be used to dynamically get access to simulation structure and variables
+   
+   [Input] private DateTime today;   // Equates to the value of the current simulation date - value comes from CLOCK
+   [Input] private double[] nitrification_inhibition;   // NI per layer
+   [Input] private double[] dlt_nh4_dnit;   // NI per layer
+   [Input] private double[] dlt_no3_dnit;   // NI per layer
+   [Input] private double[] dlayer;                     // soil layer
+   [Input] private double[] st;                         // Temp per layer
+   [Input] private double[] sw;                         // soil volumetric water content per layer
+   [Input] private double[] pH;                         // pH per layer
+   [Input] private double[] bd;                         // buck dencity (g/cm3) per layer  
+
+   //[Param] string A;         // The value for this will come from the Properties page.
+   private int soilLayer;
+   private double[] xx_clay;
+   [Output()] private double[] cNIOld;      // Concentration of Inhibitor in the previous time step 
+   [Output()] private double[] cNISol;     // Active oncentration of Inhibitor in the Current timestep
+   [Output()] private double[] cNINew;     // Concentration of Inhibitor in the Current time step 
+   [Output()] private double[] inh;      // Nitrification Inhibition
+   [Output()] private double[] xsw;      // Nitrification Inhibition
+   [Output()] private double[] xst;      // Nitrification Inhibition
+   //[Output()] private double[] x_nitri_Rate;
+   //[Output()] private double[] x_denitri_Rate;
+   //private double inh;
+   [Param] private string fert_date;
+   [Param()] private double InitialNI;   // Initial NI 
+   [Param] private double[] x_clay;      // clay content per layer
+   [Param()] private float DMPP_P; // Potential DMPP degradation rate in relative term (0-1.0)
+
+   // Estimate the DMPP adsorption
+   private double F_Clay;
+   [Output()] private double[] DMPP_Sorption;
+   
+   // Estimate the impacts of SW, ST and pH on DMPP degradation
+   private double F_ST;
+   private double F_SW;
+   private double F_pH;
+   [Output()] private double[] WFPS;
+   [Output()] private double[] F_Factor;
+   [Output()] private double[] DMPP_Decay;
+   private double DMPP_Active;
+   private double DMPP_Eff;
+   private int NI_Switch = 0;
+   private double inh_cum;
+   private int outCounter = 0;
+   
+   // The following event handler will be called once at the beginning of the simulation
+   [EventHandler] public void OnInitialised()
+   {
+      soilLayer = dlayer.Length;
+      cNIOld = new double[soilLayer];
+      cNINew = new double[soilLayer];
+      inh = new double[soilLayer];
+      xx_clay = new double[soilLayer];
+      DMPP_Decay = new double[soilLayer];
+      DMPP_Sorption = new double[soilLayer];
+      F_Factor = new double[soilLayer];
+      WFPS = new double[soilLayer];
+      //x_nitri_Rate = new double[soilLayer.Length];
+      //x_denitri_Rate = new double[soilLayer.Length];
+   }
+
+   // The following event handler will be called each day at the beginning of the day
+   [EventHandler] public void OnPrepare()
+   {
+      //int soilLayer = dlayer.Length;
+      //cNIOld = new double[soilLayer];
+      //cNINew = new double[soilLayer];
+      
+      if (DateUtility.CompareDates(fert_date, today) &lt; 0)
+      {
+         outCounter = 0;
+      }
+      else
+      {
+         outCounter++;
+      }   
+      
+      if (outCounter == 1)
+      {
+         NI_Switch = 1;
+      }
+      
+      Console.WriteLine("NI_Switch " + NI_Switch); //Write counter to console to test if it works
+      Console.WriteLine("outCounter " + outCounter); //Write counter to console to test if it works
+      
+      if (outCounter &gt;= 1 &amp;  NI_Switch == 1 )//&amp;  NI_Switch == 1
+      {
+         //int soilLayer = dlayer.Length;
+         Console.WriteLine("soilLayer " + soilLayer); //Write counter to console to test if it works
+         Console.WriteLine("InitialNI " + InitialNI); //Write counter to console to test if it works
+         //inh = new double[nitrification_inhibition.Length];
+         // loop through all soil layers
+         for (int i = 0; i &lt; soilLayer; i++)
+         {
+            if (DateUtility.CompareDates(fert_date, today) == 0 )
+            {
+               if (i == 0) 
+               {
+                  cNIOld[i] = InitialNI;            
+               }
+               else
+               {
+                  cNIOld[i] = 0.0;
+               }
+            }
+            else
+            {
+               cNIOld[i] = cNINew[i];
+            }
+           
+            if (x_clay.Length &lt;= i)
+            {
+               xx_clay[i] = 20.0;
+            }
+            else
+            {
+               xx_clay[i] = x_clay[i];
+            }
+            
+            F_Clay = 0.01 * 40.57 * xx_clay[i] / (15.2 + xx_clay[i]);
+         
+            // Estimate the DMPP adsorption
+            DMPP_Sorption[i] = cNIOld[i] * F_Clay;
+         
+            // Estimate the impacts of SW, ST and pH on DMPP degradation
+            //Soil moisture impact
+            WFPS[i] = sw[i] / (1.0 - bd[i] / 2.65);
+            F_SW = 1.0 / (1.0 + Math.Pow(WFPS[i] / 0.38, -5.5));
+         
+            // Soil temperature impact
+            F_ST = 0.06 * Math.Exp(0.08 * st[i]);
+         
+            //Soil pH impact
+            if (pH[i] &lt;= 4.0)
+            {
+               F_pH = 1.0;
+            }
+            else
+            {
+               if (pH[i] &gt; 4.0 &amp; pH[i] &lt; 11.0)
+               {
+                  F_pH = -0.0667 * pH[i] + 1.28;
+               }
+               else
+               {
+                  F_pH = 0.5;
+               }
+            }
+         
+            F_Factor[i] = F_SW * F_ST * F_pH;              
+            
+            // Estimate the DMPP availability
+            DMPP_Decay[i] = DMPP_P * (cNIOld[i] - DMPP_Sorption[i]) * F_Factor[i];
+            DMPP_Active = cNIOld[i] - DMPP_Sorption[i] - DMPP_Decay[i];    
+            
+            // Estimate the DMPP efficiency
+            if (DMPP_Active &gt;= 0.77)
+            {
+               DMPP_Eff = 1.0;
+            }
+            else
+            {
+               if(DMPP_Active &lt;= 0.05)
+               {
+                  DMPP_Eff = 0.0;
+               }
+               else
+               {
+                  DMPP_Eff = 1.4334 * DMPP_Active / (0.3742 + DMPP_Active);
+               }                  
+            }
+
+            // Estimate the DMPP concerntration in end of today, which is the initial concerntration for next day      
+            cNINew[i] = cNIOld[i] - DMPP_Decay[i];
+           
+            inh[i] = DMPP_Eff; 
+            
+            if (i == 0)
+            {
+               inh_cum = inh[i];
+            }
+            else
+            {
+               inh_cum = inh_cum + inh[i];
+            }
+            Console.WriteLine("inh_cum " + inh_cum); //Write counter to console to test if it works
+            /*
+            if (i == 0) 
+            {
+               Console.WriteLine("soilLayer " + i); //Write counter to console to test if it works
+               Console.WriteLine("cNIOld " + cNIOld[i]); //Write counter to console to test if it works
+               Console.WriteLine("cNINew " + cNINew[i]); //Write counter to console to test if it works
+               Console.WriteLine("nitrification_inhibition " + DMPP_Eff); //Write counter to console to test if it works 
+               Console.WriteLine("F_SW " + F_SW); //Write counter to console to test if it works
+               Console.WriteLine("SW " + sw[i]); //Write counter to console to test if it works
+               Console.WriteLine("F_ST " + F_ST); //Write counter to console to test if it works
+               Console.WriteLine("ST " + st[i]); //Write counter to console to test if it works
+               Console.WriteLine("F_pH " + F_pH); //Write counter to console to test if it works
+            }   
+            */
+         }
+         // Send nitrification inhibitor ratio back to soilN module
+         MyPaddock.Set("nitrification_inhibition", inh);
+         //MyPaddock.Set("dlt_nh4_dnit", x_nitri_Rate);
+         //MyPaddock.Set("dlt_no3_dnit", x_denitri_Rate);
+         
+         // Turn nitrification inhibitor calculation off when there is no nitrification inhibitor. 
+         // This is to save running time
+         if (inh_cum &gt;= 0.01)
+         {
+            NI_Switch = 1;
+         }
+         else
+         {
+            NI_Switch = 0;
+         }
+         Console.WriteLine("inh_cum _ End " + inh_cum); //Write counter to console to test if it works
+         Console.WriteLine("NI_Switch _ End " + NI_Switch); //Write counter to console to test if it works
+      }      
+   }
+
+}
+  </text>
+        </manager2>
